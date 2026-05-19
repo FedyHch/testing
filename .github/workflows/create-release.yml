@@ -1,0 +1,138 @@
+name: Create Candidate Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version de la release (ex: 1.0.0)'
+        required: true
+        type: string
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create candidate package
+        run: |
+          # Créer un répertoire temporaire pour la release
+          mkdir -p release-package
+
+          # Copier tous les fichiers sauf ceux du recruteur
+          rsync -av \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude 'node_modules' \
+            --exclude 'dist' \
+            --exclude 'release-package' \
+            --exclude 'EVALUATION_GUIDE.md' \
+            --exclude 'CONSEILS_RECRUTEUR.md' \
+            --exclude 'SOLUTION_REFERENCE.md' \
+            --exclude 'ANALYSIS.md' \
+            --exclude 'IMPROVEMENTS.md' \
+            ./ release-package/
+
+          # Supprimer tous les commentaires indiquant les problèmes
+          echo "Nettoyage des commentaires de problèmes..."
+
+          # Supprimer les commentaires JavaScript/TypeScript : // Problème...
+          find release-package/src -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \) -exec sed -i 's|^.*// Problème.*$||g' {} \;
+
+          # Supprimer les commentaires JSX : {/* Problème... */}
+          find release-package/src -type f \( -name "*.tsx" -o -name "*.jsx" \) -exec sed -i 's|{/\* Problème[^*]*\*/}||g' {} \;
+
+          # Nettoyer les lignes vides multiples créées par la suppression
+          find release-package/src -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \) -exec sed -i '/^$/N;/^\n$/D' {} \;
+
+          # Créer l'archive
+          cd release-package
+          tar -czf ../recruitment-react-v${{ steps.version.outputs.version }}.tar.gz .
+          cd ..
+          zip -r recruitment-react-v${{ steps.version.outputs.version }}.zip release-package/
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          cat << 'EOF' > release_notes.md
+          ## Exercice de Recrutement - Développeur React
+
+          ### Installation
+
+          ```bash
+          # Extraire l'archive
+          tar -xzf recruitment-react-v${{ steps.version.outputs.version }}.tar.gz
+          # ou
+          unzip recruitment-react-v${{ steps.version.outputs.version }}.zip
+
+          # Installer les dépendances
+          npm install
+
+          # Démarrer l'application
+          npm run dev
+
+          # Lancer les tests
+          npm test
+          ```
+
+          ### Objectifs
+
+          - Analyser le code et identifier les problèmes de performance
+          - Proposer et implémenter des améliorations
+          - Démontrer la compréhension des Pure Components
+          - Améliorer la testabilité du code
+
+          ### Durée recommandée
+
+          2h30 - 3h
+
+          ### Livrables
+
+          1. `ANALYSIS.md` - Vos observations
+          2. Code refactorisé
+          3. `IMPROVEMENTS.md` - Explication de vos choix
+          4. Tests unitaires
+
+          ---
+
+          Bonne chance ! 🚀
+          EOF
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Créer ou mettre à jour le tag si nécessaire
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            git tag -f "v${{ steps.version.outputs.version }}"
+            git push origin "v${{ steps.version.outputs.version }}" --force
+          fi
+
+          # Créer la release avec gh CLI
+          gh release create "v${{ steps.version.outputs.version }}" \
+            --title "Release v${{ steps.version.outputs.version }}" \
+            --notes-file release_notes.md \
+            recruitment-react-v${{ steps.version.outputs.version }}.tar.gz \
+            recruitment-react-v${{ steps.version.outputs.version }}.zip
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -rf release-package
+          rm -f release_notes.md
